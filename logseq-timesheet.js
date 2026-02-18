@@ -19,7 +19,7 @@ function parseTimeJournal(content, clientSlug) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const dateMatch = line.match(/^-\s*\[\[([A-Za-z]+\s+\d+[a-z]*,\s*\d{4})\]\]/);
+    const dateMatch = line.match(/^-\s*\[\[([A-Za-z]{3,9}\s+\d+[a-z]*,\s*\d{4})\]\]/);
     if (dateMatch) {
       currentDate = dateMatch[1];
       currentDescription = null;
@@ -59,7 +59,28 @@ function countAllPropertyValues(content, clientSlug) {
   return total;
 }
 
-function exportTimesheet(clientName) {
+function isInMonth(dateStr, targetMonth) {
+  // dateStr format: "Jan 31st; 2026" or "January 15; 2026"
+  // targetMonth format: "2026-01"
+  const [targetYear, targetMon] = targetMonth.split('-').map(Number);
+  const months = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+    'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+  };
+  
+  // Remove ordinal suffixes (st, nd, rd, th) and parse
+  const cleaned = dateStr.replace(/(\d+)(st|nd|rd|th)/i, '$1').replace(';', ',');
+  const match = cleaned.match(/^([A-Za-z]+)\s+\d+,\s*(\d{4})$/);
+  if (!match) return false;
+  
+  const monthStr = match[1].toLowerCase().slice(0, 3);
+  const year = parseInt(match[2], 10);
+  const month = months[monthStr];
+  
+  return year === targetYear && month === targetMon;
+}
+
+function exportTimesheet(clientName, targetMonth) {
   const clientSlug = getClientSlug(clientName);
   const journalFiles = findTimeJournals();
   let allEntries = [];
@@ -68,8 +89,10 @@ function exportTimesheet(clientName) {
   for (const file of journalFiles) {
     const filePath = path.join(LOGSEQ_PAGES_DIR, file);
     const content = fs.readFileSync(filePath, 'utf-8');
-    allEntries = allEntries.concat(parseTimeJournal(content, clientSlug));
-    doubleCheckTotal += countAllPropertyValues(content, clientSlug);
+    const entries = parseTimeJournal(content, clientSlug);
+    const filteredEntries = entries.filter(e => isInMonth(e.date, targetMonth));
+    allEntries = allEntries.concat(filteredEntries);
+    doubleCheckTotal += filteredEntries.reduce((sum, e) => sum + e.hours, 0);
   }
 
   allEntries.sort((a, b) => {
@@ -92,10 +115,33 @@ function exportTimesheet(clientName) {
   };
 }
 
-const clientName = process.argv[2] || 'Bain Ultra';
-const month = process.argv[3] || new Date().toISOString().slice(0, 7); // YYYY-MM
+function showHelp() {
+  console.log(`Usage: logseq-timesheet [YYYY-MM] [client-name]
 
-const result = exportTimesheet(clientName);
+Export timesheet entries from Logseq time journals to CSV.
+
+Arguments:
+  YYYY-MM       Month to export (default: current month)
+  client-name   Client name for filtering entries (default: "Bain Ultra")
+
+Examples:
+  logseq-timesheet                    # Current month, default client
+  logseq-timesheet 2026-02            # February 2026, default client
+  logseq-timesheet 2026-02 "Acme Co"  # February 2026, Acme Co client
+`);
+  process.exit(0);
+}
+
+const args = process.argv.slice(2);
+
+if (args.includes('--help') || args.includes('-h')) {
+  showHelp();
+}
+
+const month = args[0] || new Date().toISOString().slice(0, 7); // YYYY-MM
+const clientName = args[1] || 'Bain Ultra';
+
+const result = exportTimesheet(clientName, month);
 const outputFile = `${month}-invoice-jean-denis-caron-total-${result.doubleCheckTotal}.csv`;
 
 fs.writeFileSync(outputFile, result.csv);
