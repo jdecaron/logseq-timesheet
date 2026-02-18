@@ -45,15 +45,31 @@ function findTimeJournals() {
   return files.filter(f => f.startsWith('⏰') && f.endsWith('.md'));
 }
 
+function countAllPropertyValues(content, clientSlug) {
+  const lines = content.split('\n');
+  const timePropertyRegex = new RegExp(`${clientSlug}-time::\\s*([\\d.]+)`);
+  let total = 0;
+
+  for (const line of lines) {
+    const match = line.match(timePropertyRegex);
+    if (match) {
+      total += parseFloat(match[1]);
+    }
+  }
+  return total;
+}
+
 function exportTimesheet(clientName) {
   const clientSlug = getClientSlug(clientName);
   const journalFiles = findTimeJournals();
   let allEntries = [];
+  let doubleCheckTotal = 0;
 
   for (const file of journalFiles) {
     const filePath = path.join(LOGSEQ_PAGES_DIR, file);
     const content = fs.readFileSync(filePath, 'utf-8');
     allEntries = allEntries.concat(parseTimeJournal(content, clientSlug));
+    doubleCheckTotal += countAllPropertyValues(content, clientSlug);
   }
 
   allEntries.sort((a, b) => {
@@ -67,13 +83,25 @@ function exportTimesheet(clientName) {
     return `${entry.date},"${desc}",${entry.hours}`;
   });
 
-  return lines.join('\n');
+  const entriesTotal = allEntries.reduce((sum, e) => sum + e.hours, 0);
+
+  return {
+    csv: lines.join('\n'),
+    doubleCheckTotal,
+    entriesTotal
+  };
 }
 
 const clientName = process.argv[2] || 'Bain Ultra';
 const month = process.argv[3] || new Date().toISOString().slice(0, 7); // YYYY-MM
-const outputFile = `${month}-invoice-jean-denis-caron.csv`;
 
-const csv = exportTimesheet(clientName);
-fs.writeFileSync(outputFile, csv);
+const result = exportTimesheet(clientName);
+const outputFile = `${month}-invoice-jean-denis-caron-total-${result.doubleCheckTotal}.csv`;
+
+fs.writeFileSync(outputFile, result.csv);
 console.log(`Written to ${outputFile}`);
+console.log(`Entries total: ${result.entriesTotal}`);
+console.log(`Double-check total: ${result.doubleCheckTotal}`);
+if (result.entriesTotal !== result.doubleCheckTotal) {
+  console.log(`WARNING: Totals do not match!`);
+}
